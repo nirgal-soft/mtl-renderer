@@ -1,0 +1,251 @@
+//  main.swift
+//  hello_triangle
+//
+//  Created by Zach Murray on 10/5/25.
+//
+
+import Foundation
+import Cocoa
+import Metal
+import MetalKit
+import simd
+
+//MARK: - Shaders (metal shading language)
+let shaderSource = """
+#include <metal_stdlib>
+using namespace metal;
+
+//vertex structure
+struct Vertex{
+    float3 position [[attribute(0)]];
+    float3 color [[attribute(1)]];
+};
+
+//uniforms
+struct Uniforms{
+    float4x4 modelMatrix;
+    float4x4 viewMatrix;
+    float4x4 projectionMatrix;
+};
+
+//output from vertex to frag Shaders
+struct RasterizerData{
+    float4 position [[position]];
+    float3 color;
+};
+
+//vertex shader
+vertex RasterizerData vertexShader(Vertex in [[stage_in]],
+                                   constant Uniforms& uniforms [[buffer(1)]]) {
+                                    
+    RasterizerData out;
+    float4 worldPos = uniforms.modelMatrix * float4(in.position, 1.0);
+    float4 viewPos = uniforms.viewMatrix * worldPos;
+    out.position = uniforms.projectionMatrix * viewPos;
+    out.color = in.color;
+    return out;
+}
+
+//frag shader
+fragment float4 fragmentShader(RasterizerData in [[stage_in]]){
+    return float4(in.color, 1.0);
+}
+"""
+
+func rotationMatrixZ(angle: Float) -> float4x4{
+  let c = cos(angle)
+  let s = sin(angle)
+
+  return float4x4([
+    SIMD4<Float>(c, s, 0, 0),
+    SIMD4<Float>(-s, c, 0, 0),
+    SIMD4<Float>(0, 0, 1, 0),
+    SIMD4<Float>(0, 0, 0, 1),
+  ])
+}
+
+func translationMatrix(pos: SIMD3<Float>) -> simd_float4x4{
+  var mat = matrix_identity_float4x4
+  mat.columns.3 = SIMD4<Float>(pos.x, pos.y, pos.z, 1.0)
+  return mat
+}
+
+// MARK: - Renderer
+class Renderer: NSObject, MTKViewDelegate{
+  let device: MTLDevice
+  let commandQueue: MTLCommandQueue
+  var depthStencilState: MTLDepthStencilState!
+  var camera: Camera!
+  var pipelineState: MTLRenderPipelineState!
+  var vertexBuffer: MTLBuffer!
+  var uniformBuffer: MTLBuffer!
+  var triangle: Triangle!
+  var cube: Cube!
+  var lastFrameTime = CACurrentMediaTime()
+  var angle: Float = 0.0
+
+  init(device: MTLDevice){
+    self.device = device
+    self.commandQueue = device.makeCommandQueue()!
+    super.init()
+
+    setupDepthStencil()
+    setupPipeline()
+    setupVertexBuffer()
+    setupUniformBuffer()
+
+    print("cube verts count: \(cube.vertexData().count)")
+  }
+
+  func setupDepthStencil(){
+    let depthDescriptor = MTLDepthStencilDescriptor()
+    depthDescriptor.depthCompareFunction = .less
+    depthDescriptor.isDepthWriteEnabled = true
+    depthStencilState = device.makeDepthStencilState(descriptor: depthDescriptor)
+  }
+
+  func setupPipeline(){
+    //compile shaders
+    let library = try! device.makeLibrary(source: shaderSource, options: nil)
+    let vertexFunction = library.makeFunction(name: "vertexShader")
+    let fragmentFunction = library.makeFunction(name: "fragmentShader")
+
+    //create
+    let pipelineDescriptor = MTLRenderPipelineDescriptor()
+    pipelineDescriptor.vertexFunction = vertexFunction
+    pipelineDescriptor.fragmentFunction = fragmentFunction
+    pipelineDescriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
+    pipelineDescriptor.depthAttachmentPixelFormat = .depth32Float
+
+    //set up vert descriptor (tesll metal the layout of the vert data)
+    let vertexDescriptor = MTLVertexDescriptor()
+    //position attr (3 floats at offset 0)
+    vertexDescriptor.attributes[0].format = .float3
+    vertexDescriptor.attributes[0].offset = 0
+    vertexDescriptor.attributes[0].bufferIndex = 0
+    //color attrs (3 floats at offset 12 bytes)
+    vertexDescriptor.attributes[1].format = .float3
+    vertexDescriptor.attributes[1].offset = 12
+    vertexDescriptor.attributes[1].bufferIndex = 0
+    //layout (stride = 24 bytes per vertex: 3 float + 3 floats)
+    vertexDescriptor.layouts[0].stride = 24
+
+    pipelineDescriptor.vertexDescriptor = vertexDescriptor
+
+    //create pipeline pipelineState
+    do{
+      pipelineState = try device.makeRenderPipelineState(descriptor: pipelineDescriptor)
+      print("pipeline created successfully")
+    }catch{
+      print("pipeline error: \(error)")
+    }
+  }
+
+  func setupVertexBuffer(){
+    cube = Cube()
+
+    //create vertex buffer (count * size)
+    let dataSize = cube.vertexData().count * MemoryLayout<Float>.stride
+    vertexBuffer = device.makeBuffer(bytes: cube.vertexData(), length: dataSize, options: [])
+  }
+
+  func setupUniformBuffer(){
+    uniformBuffer = device.makeBuffer(length: MemoryLayout<Uniforms>.stride, options: [])
+  }
+
+  //called every frame
+  func draw(in view: MTKView){
+    let now = CACurrentMediaTime()
+    let deltaTime = now - lastFrameTime
+    lastFrameTime = now 
+    angle += Float(deltaTime) * 2.0
+
+    let mat = rotationMatrixZ(angle: angle)
+
+    let proj = camera.makePerspective()
+    let eye = SIMD3<Float>(5, 5, 5)
+    let center = SIMD3<Float>(0, 0, 0)
+    let up = SIMD3<Float>(0, 1, 0)
+    let view_mat = camera.lookAt(eye: eye, center: center, up: up)
+    
+    let uniforms = Uniforms(modelMatrix: mat, viewMatrix: view_mat, projectionMatrix: proj)
+
+    let pointer = uniformBuffer.contents().bindMemory(to: Uniforms.self, capacity: 1)
+    pointer.pointee = uniforms
+
+    guard let drawable = view.currentDrawable,
+      let renderPassDescriptor = view.currentRenderPassDescriptor else {return}
+
+    //set clear color
+    renderPassDescriptor.colorAttachments[0].clearColor = MTLClearColor(red: 0.1, green: 0.1, blue: 0.1, alpha: 1.0)
+
+    //create comand buffer
+    let commandBuffer = commandQueue.makeCommandBuffer()!
+
+    //create render encoder
+    let renderEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor)!
+
+    //set pipeline and vertex buffer
+    renderEncoder.setDepthStencilState(depthStencilState)
+    renderEncoder.setRenderPipelineState(pipelineState)
+    renderEncoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
+    renderEncoder.setVertexBuffer(uniformBuffer, offset: 0, index: 1)
+
+    //draw the triangle
+    renderEncoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 36)
+
+    //finish encoding
+    renderEncoder.endEncoding()
+
+    //presnet drawable and commit
+    commandBuffer.present(drawable)
+    commandBuffer.commit()
+  }
+
+  func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize){
+
+  }
+}
+
+//MAKR: - app setup
+class AppDelegate: NSObject, NSApplicationDelegate{
+  var window: NSWindow!
+  var renderer: Renderer!
+
+  func applicationDidFinishLaunching(_ notification: Notification){
+    //get metal device (gpu)
+    guard let device = MTLCreateSystemDefaultDevice() else{
+      fatalError("metal is not supported on this device")
+    }
+
+    //create metal view
+    let metalView = MTKView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
+    metalView.device = device
+    metalView.clearColor = MTLClearColor(red: 0.1, green: 0.1, blue: 0.1, alpha: 1.0)
+    metalView.depthStencilPixelFormat = .depth32Float
+    metalView.clearDepth = 1.0
+
+    //create renderer
+    renderer = Renderer(device: device)
+    let aspect = Float(metalView.drawableSize.width/metalView.drawableSize.height)
+    renderer.camera = Camera(fov: 1.13, aspect: aspect, near: 0.1, far: 100.0)
+    metalView.delegate = renderer
+
+    //create window
+    window = NSWindow(
+      contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
+      styleMask: [.titled, .closable, .resizable],
+      backing: .buffered,
+      defer: false
+    )
+    window.title = "METAL"
+    window.contentView = metalView
+    window.center()
+    window.makeKeyAndOrderFront(nil)
+  }
+}
+
+let app = NSApplication.shared
+let delegate = AppDelegate()
+app.delegate = delegate
+app.run()
