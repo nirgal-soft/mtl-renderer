@@ -6,7 +6,10 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "mtl_renderer",
-            path: "src"
+            path: "src",
+            resources: [
+                .copy("Resources")
+            ]
         )
     ]
 )

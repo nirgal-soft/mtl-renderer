@@ -28,20 +28,6 @@ class Camera{
   }
 
   func makePerspective() -> simd_float4x4{
-    // let y_scale = 1/tan(fov * 0.5)
-    // let x_scale = y_scale/aspect
-    // let range = far - near
-    // let z_scale = far/range
-    // let wz_scale = -near*far/range
-
-    // let pmat = simd_float4x4(columns: (
-    //   simd_float4(x_scale, 0, 0, 0),
-    //   simd_float4(0, y_scale, 0, 0),
-    //   simd_float4(0, 0, z_scale, -z_scale),
-    //   simd_float4(0, 0, wz_scale, 0),
-    // ))
-
-    // return pmat
     let ys = 1 / tan(fov * 0.5)
     let xs = ys / aspect
     let zs = far / (near - far)

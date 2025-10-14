@@ -3,4 +3,5 @@ import simd
 struct Vertex{
   var position: SIMD3<Float>
   var color: SIMD3<Float>
+  var uv: SIMD2<Float>
 }

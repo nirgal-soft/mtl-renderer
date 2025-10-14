@@ -52,14 +52,14 @@ fragment float4 fragmentShader(RasterizerData in [[stage_in]]){
 }
 """
 
-func rotationMatrixZ(angle: Float) -> float4x4{
+func rotationMatrixY(angle: Float) -> float4x4{
   let c = cos(angle)
   let s = sin(angle)
 
   return float4x4([
-    SIMD4<Float>(c, s, 0, 0),
-    SIMD4<Float>(-s, c, 0, 0),
-    SIMD4<Float>(0, 0, 1, 0),
+    SIMD4<Float>(c, 0, -s, 0),
+    SIMD4<Float>(0, 1, 0, 0),
+    SIMD4<Float>(s, 0, c, 0),
     SIMD4<Float>(0, 0, 0, 1),
   ])
 }
@@ -127,8 +127,8 @@ class Renderer: NSObject, MTKViewDelegate{
     vertexDescriptor.attributes[1].format = .float3
     vertexDescriptor.attributes[1].offset = 12
     vertexDescriptor.attributes[1].bufferIndex = 0
-    //layout (stride = 24 bytes per vertex: 3 float + 3 floats)
-    vertexDescriptor.layouts[0].stride = 24
+    //layout (stride = 32 bytes per vertex: 3 position + 3 color + 3 texture)
+    vertexDescriptor.layouts[0].stride = 32
 
     pipelineDescriptor.vertexDescriptor = vertexDescriptor
 
@@ -160,7 +160,7 @@ class Renderer: NSObject, MTKViewDelegate{
     lastFrameTime = now 
     angle += Float(deltaTime) * 2.0
 
-    let mat = rotationMatrixZ(angle: angle)
+    let mat = rotationMatrixY(angle: angle)
 
     let proj = camera.makePerspective()
     let eye = SIMD3<Float>(5, 5, 5)
