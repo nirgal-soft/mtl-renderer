@@ -19,6 +19,7 @@ using namespace metal;
 struct Vertex{
     float3 position [[attribute(0)]];
     float3 color [[attribute(1)]];
+    float2 uv [[attribute(2)]];
 };
 
 //uniforms
@@ -32,6 +33,7 @@ struct Uniforms{
 struct RasterizerData{
     float4 position [[position]];
     float3 color;
+    float2 uv;
 };
 
 //vertex shader
@@ -43,12 +45,17 @@ vertex RasterizerData vertexShader(Vertex in [[stage_in]],
     float4 viewPos = uniforms.viewMatrix * worldPos;
     out.position = uniforms.projectionMatrix * viewPos;
     out.color = in.color;
+    out.uv = in.uv;
     return out;
 }
 
 //frag shader
-fragment float4 fragmentShader(RasterizerData in [[stage_in]]){
-    return float4(in.color, 1.0);
+fragment float4 fragmentShader(RasterizerData in [[stage_in]],
+                                texture2d<float> colorTexture [[texture(0)]],
+                                sampler textureSampler [[sampler(0)]]){
+    float4 textureColor = colorTexture.sample(textureSampler, in.uv);
+    // return textureColor;
+    return textureColor * float4(in.color, 1.0);
 }
 """
 
@@ -77,8 +84,10 @@ class Renderer: NSObject, MTKViewDelegate{
   var depthStencilState: MTLDepthStencilState!
   var camera: Camera!
   var pipelineState: MTLRenderPipelineState!
+  var samplerState: MTLSamplerState!
   var vertexBuffer: MTLBuffer!
   var uniformBuffer: MTLBuffer!
+  var texture: MTLTexture!
   var triangle: Triangle!
   var cube: Cube!
   var lastFrameTime = CACurrentMediaTime()
@@ -91,6 +100,8 @@ class Renderer: NSObject, MTKViewDelegate{
 
     setupDepthStencil()
     setupPipeline()
+    setupSamplerState()
+    setupTexture()
     setupVertexBuffer()
     setupUniformBuffer()
 
@@ -127,7 +138,11 @@ class Renderer: NSObject, MTKViewDelegate{
     vertexDescriptor.attributes[1].format = .float3
     vertexDescriptor.attributes[1].offset = 12
     vertexDescriptor.attributes[1].bufferIndex = 0
-    //layout (stride = 32 bytes per vertex: 3 position + 3 color + 3 texture)
+    //uv attr (2 floats at offset 24 bytes)
+    vertexDescriptor.attributes[2].format = .float2
+    vertexDescriptor.attributes[2].offset = 24
+    vertexDescriptor.attributes[2].bufferIndex = 0
+    //layout (stride = 32 bytes per vertex: 3 position + 3 color + 2 texture)
     vertexDescriptor.layouts[0].stride = 32
 
     pipelineDescriptor.vertexDescriptor = vertexDescriptor
@@ -139,6 +154,24 @@ class Renderer: NSObject, MTKViewDelegate{
     }catch{
       print("pipeline error: \(error)")
     }
+  }
+
+  func setupSamplerState(){
+    let samplerDescriptor = MTLSamplerDescriptor()
+    samplerDescriptor.minFilter = .linear
+    samplerDescriptor.magFilter = .linear
+    samplerDescriptor.mipFilter = .linear
+    samplerDescriptor.sAddressMode = .repeat
+    samplerDescriptor.tAddressMode = .repeat
+    samplerState = device.makeSamplerState(descriptor: samplerDescriptor)
+  }
+
+  func setupTexture(){
+    let loader = TextureLoader(device: device)
+    guard let url = Bundle.module.url(forResource: "texture", withExtension: "jpg", subdirectory: "Resources") else {
+      fatalError("Could not find texture.jpg in bundle")
+    }
+    texture = try! loader.loadTexture(from: url)
   }
 
   func setupVertexBuffer(){
@@ -163,7 +196,7 @@ class Renderer: NSObject, MTKViewDelegate{
     let mat = rotationMatrixY(angle: angle)
 
     let proj = camera.makePerspective()
-    let eye = SIMD3<Float>(5, 5, 5)
+    let eye = SIMD3<Float>(2, 2, 2)
     let center = SIMD3<Float>(0, 0, 0)
     let up = SIMD3<Float>(0, 1, 0)
     let view_mat = camera.lookAt(eye: eye, center: center, up: up)
@@ -190,6 +223,8 @@ class Renderer: NSObject, MTKViewDelegate{
     renderEncoder.setRenderPipelineState(pipelineState)
     renderEncoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
     renderEncoder.setVertexBuffer(uniformBuffer, offset: 0, index: 1)
+    renderEncoder.setFragmentTexture(texture, index: 0)
+    renderEncoder.setFragmentSamplerState(samplerState, index: 0)
 
     //draw the triangle
     renderEncoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 36)

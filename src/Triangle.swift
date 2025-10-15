@@ -6,9 +6,21 @@ struct Triangle{
   init(){
     let h = Float(sqrt(3.0)/2.0)
     vertices = [
-      Vertex(position: SIMD3<Float>(0.0, h*2.0/3.0, 0.0), color: SIMD3<Float>(1.0, 0.0, 0.0)),
-      Vertex(position: SIMD3<Float>(-0.5, -h/3.0, 0.0), color: SIMD3<Float>(0.0, 1.0, 0.0)),
-      Vertex(position: SIMD3<Float>(0.5, -h/3.0, 0.0), color: SIMD3<Float>(0.0, 0.0, 1.0)),
+      Vertex(
+        position: SIMD3<Float>(0.0, h*2.0/3.0, 0.0), 
+        color: SIMD3<Float>(1.0, 0.0, 0.0),
+        uv: SIMD2<Float>(0.0, 0.0)
+      ),
+      Vertex(
+        position: SIMD3<Float>(-0.5, -h/3.0, 0.0), 
+        color: SIMD3<Float>(0.0, 1.0, 0.0),
+        uv: SIMD2<Float>(0.0, 0.0)
+      ),
+      Vertex(
+        position: SIMD3<Float>(0.5, -h/3.0, 0.0), 
+        color: SIMD3<Float>(0.0, 0.0, 1.0),
+        uv: SIMD2<Float>(0.0, 0.0)
+      ),
     ]
   }
 
