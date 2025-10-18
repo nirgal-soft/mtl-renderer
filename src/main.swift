@@ -89,7 +89,7 @@ class Renderer: NSObject, MTKViewDelegate{
   var uniformBuffer: MTLBuffer!
   var texture: MTLTexture!
   var triangle: Triangle!
-  var cube: Cube!
+  var cube: Object!
   var lastFrameTime = CACurrentMediaTime()
   var angle: Float = 0.0
 
@@ -176,7 +176,12 @@ class Renderer: NSObject, MTKViewDelegate{
   }
 
   func setupVertexBuffer(){
-    cube = Cube()
+    let loader = ObjLoader()
+    guard let url = Bundle.module.url(forResource: "cube", withExtension: "obj", subdirectory: "Resources") else {
+      fatalError("Could not find cube.obj in bundle")
+    }
+    // cube = Cube()
+    cube = try! loader.load(from: url)
 
     //create vertex buffer (count * size)
     let dataSize = cube.vertexData().count * MemoryLayout<Float>.stride

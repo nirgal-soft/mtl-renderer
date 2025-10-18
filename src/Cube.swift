@@ -1,5 +1,4 @@
 import simd
-import Metal
 
 struct Cube{
   var vertices: [Vertex]
