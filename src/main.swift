@@ -18,7 +18,7 @@ using namespace metal;
 //vertex structure
 struct Vertex{
     float3 position [[attribute(0)]];
-    float3 color [[attribute(1)]];
+    float3 normal [[attribute(1)]];
     float2 uv [[attribute(2)]];
 };
 
@@ -32,7 +32,7 @@ struct Uniforms{
 //output from vertex to frag Shaders
 struct RasterizerData{
     float4 position [[position]];
-    float3 color;
+    float3 normal;
     float2 uv;
 };
 
@@ -44,7 +44,7 @@ vertex RasterizerData vertexShader(Vertex in [[stage_in]],
     float4 worldPos = uniforms.modelMatrix * float4(in.position, 1.0);
     float4 viewPos = uniforms.viewMatrix * worldPos;
     out.position = uniforms.projectionMatrix * viewPos;
-    out.color = in.color;
+    out.normal = in.normal;
     out.uv = in.uv;
     return out;
 }
@@ -54,8 +54,7 @@ fragment float4 fragmentShader(RasterizerData in [[stage_in]],
                                 texture2d<float> colorTexture [[texture(0)]],
                                 sampler textureSampler [[sampler(0)]]){
     float4 textureColor = colorTexture.sample(textureSampler, in.uv);
-    // return textureColor;
-    return textureColor * float4(in.color, 1.0);
+    return textureColor;
 }
 """
 
@@ -86,6 +85,7 @@ class Renderer: NSObject, MTKViewDelegate{
   var pipelineState: MTLRenderPipelineState!
   var samplerState: MTLSamplerState!
   var vertexBuffer: MTLBuffer!
+  var indexBuffer: MTLBuffer!
   var uniformBuffer: MTLBuffer!
   var texture: MTLTexture!
   var triangle: Triangle!
@@ -103,6 +103,7 @@ class Renderer: NSObject, MTKViewDelegate{
     setupSamplerState()
     setupTexture()
     setupVertexBuffer()
+    setupIndexBuffer()
     setupUniformBuffer()
 
     print("cube verts count: \(cube.vertexData().count)")
@@ -134,7 +135,7 @@ class Renderer: NSObject, MTKViewDelegate{
     vertexDescriptor.attributes[0].format = .float3
     vertexDescriptor.attributes[0].offset = 0
     vertexDescriptor.attributes[0].bufferIndex = 0
-    //color attrs (3 floats at offset 12 bytes)
+    //normal attrs (3 floats at offset 12 bytes)
     vertexDescriptor.attributes[1].format = .float3
     vertexDescriptor.attributes[1].offset = 12
     vertexDescriptor.attributes[1].bufferIndex = 0
@@ -142,7 +143,7 @@ class Renderer: NSObject, MTKViewDelegate{
     vertexDescriptor.attributes[2].format = .float2
     vertexDescriptor.attributes[2].offset = 24
     vertexDescriptor.attributes[2].bufferIndex = 0
-    //layout (stride = 32 bytes per vertex: 3 position + 3 color + 2 texture)
+    //layout (stride = 32 bytes per vertex: 3 position + 3 normal + 2 texture)
     vertexDescriptor.layouts[0].stride = 32
 
     pipelineDescriptor.vertexDescriptor = vertexDescriptor
@@ -180,6 +181,11 @@ class Renderer: NSObject, MTKViewDelegate{
     //create vertex buffer (count * size)
     let dataSize = cube.vertexData().count * MemoryLayout<Float>.stride
     vertexBuffer = device.makeBuffer(bytes: cube.vertexData(), length: dataSize, options: [])
+  }
+
+  func setupIndexBuffer(){
+    let dataSize = cube.indexData().count * MemoryLayout<UInt32>.stride
+    indexBuffer = device.makeBuffer(bytes: cube.indexData(), length: dataSize, options: [])
   }
 
   func setupUniformBuffer(){
@@ -226,8 +232,15 @@ class Renderer: NSObject, MTKViewDelegate{
     renderEncoder.setFragmentTexture(texture, index: 0)
     renderEncoder.setFragmentSamplerState(samplerState, index: 0)
 
-    //draw the triangle
-    renderEncoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 36)
+    //draw the object
+    // renderEncoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 36)
+    renderEncoder.drawIndexedPrimitives(
+      type: .triangle,
+      indexCount: cube.indexData().count,
+      indexType: .uint32,
+      indexBuffer: indexBuffer,
+      indexBufferOffset: 0
+    )
 
     //finish encoding
     renderEncoder.endEncoding()

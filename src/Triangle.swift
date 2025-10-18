@@ -8,17 +8,17 @@ struct Triangle{
     vertices = [
       Vertex(
         position: SIMD3<Float>(0.0, h*2.0/3.0, 0.0), 
-        color: SIMD3<Float>(1.0, 0.0, 0.0),
+        normal: SIMD3<Float>(1.0, 0.0, 0.0),
         uv: SIMD2<Float>(0.0, 0.0)
       ),
       Vertex(
         position: SIMD3<Float>(-0.5, -h/3.0, 0.0), 
-        color: SIMD3<Float>(0.0, 1.0, 0.0),
+        normal: SIMD3<Float>(0.0, 1.0, 0.0),
         uv: SIMD2<Float>(0.0, 0.0)
       ),
       Vertex(
         position: SIMD3<Float>(0.5, -h/3.0, 0.0), 
-        color: SIMD3<Float>(0.0, 0.0, 1.0),
+        normal: SIMD3<Float>(0.0, 0.0, 1.0),
         uv: SIMD2<Float>(0.0, 0.0)
       ),
     ]
@@ -36,7 +36,7 @@ struct Triangle{
   func vertexData() -> [Float]{
     vertices.flatMap{vertex in
       [vertex.position.x, vertex.position.y, vertex.position.y,
-        vertex.color.x, vertex.color.y, vertex.color.z]
+        vertex.normal.x, vertex.normal.y, vertex.normal.z]
     }
   }
 }
