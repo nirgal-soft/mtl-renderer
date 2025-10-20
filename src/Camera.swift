@@ -4,6 +4,14 @@ struct Uniforms{
   var modelMatrix: simd_float4x4
   var viewMatrix: simd_float4x4
   var projectionMatrix: simd_float4x4
+  var normalMatrix: simd_float3x3
+  var lightDirection: simd_float3
+  var lightColor: simd_float3
+  var spotLightPosition: simd_float3
+  var spotLightDirection: simd_float3
+  var spotLightColor: simd_float3
+  var spotLightCutoff: Float
+  var spotLightOuterCutoff: Float
 }
 
 class Camera{

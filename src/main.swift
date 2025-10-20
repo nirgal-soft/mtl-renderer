@@ -10,70 +10,10 @@ import Metal
 import MetalKit
 import simd
 
-//MARK: - Shaders (metal shading language)
-let shaderSource = """
-#include <metal_stdlib>
-using namespace metal;
-
-//vertex structure
-struct Vertex{
-    float3 position [[attribute(0)]];
-    float3 normal [[attribute(1)]];
-    float2 uv [[attribute(2)]];
-};
-
-//uniforms
-struct Uniforms{
-    float4x4 modelMatrix;
-    float4x4 viewMatrix;
-    float4x4 projectionMatrix;
-};
-
-//output from vertex to frag Shaders
-struct RasterizerData{
-    float4 position [[position]];
-    float3 normal;
-    float2 uv;
-};
-
-//vertex shader
-vertex RasterizerData vertexShader(Vertex in [[stage_in]],
-                                   constant Uniforms& uniforms [[buffer(1)]]) {
-                                    
-    RasterizerData out;
-    float4 worldPos = uniforms.modelMatrix * float4(in.position, 1.0);
-    float4 viewPos = uniforms.viewMatrix * worldPos;
-    out.position = uniforms.projectionMatrix * viewPos;
-    out.normal = in.normal;
-    out.uv = in.uv;
-    return out;
-}
-
-//frag shader
-fragment float4 fragmentShader(RasterizerData in [[stage_in]],
-                                texture2d<float> colorTexture [[texture(0)]],
-                                sampler textureSampler [[sampler(0)]]){
-    float4 textureColor = colorTexture.sample(textureSampler, in.uv);
-    return textureColor;
-}
-"""
-
-func rotationMatrixY(angle: Float) -> float4x4{
-  let c = cos(angle)
-  let s = sin(angle)
-
-  return float4x4([
-    SIMD4<Float>(c, 0, -s, 0),
-    SIMD4<Float>(0, 1, 0, 0),
-    SIMD4<Float>(s, 0, c, 0),
-    SIMD4<Float>(0, 0, 0, 1),
-  ])
-}
-
-func translationMatrix(pos: SIMD3<Float>) -> simd_float4x4{
-  var mat = matrix_identity_float4x4
-  mat.columns.3 = SIMD4<Float>(pos.x, pos.y, pos.z, 1.0)
-  return mat
+extension simd_float4{
+  var xyz: simd_float3{
+    return simd_float3(x, y, z)
+  }
 }
 
 // MARK: - Renderer
@@ -84,12 +24,13 @@ class Renderer: NSObject, MTKViewDelegate{
   var camera: Camera!
   var pipelineState: MTLRenderPipelineState!
   var samplerState: MTLSamplerState!
-  var vertexBuffer: MTLBuffer!
-  var indexBuffer: MTLBuffer!
+  // var vertexBuffer: MTLBuffer!
+  // var indexBuffer: MTLBuffer!
   var uniformBuffer: MTLBuffer!
+  var globalVertexBuffer: MTLBuffer!
+  var globalIndexBuffer: MTLBuffer!
   var texture: MTLTexture!
-  var triangle: Triangle!
-  var cube: Object!
+  var scene: Scene!
   var lastFrameTime = CACurrentMediaTime()
   var angle: Float = 0.0
 
@@ -102,11 +43,9 @@ class Renderer: NSObject, MTKViewDelegate{
     setupPipeline()
     setupSamplerState()
     setupTexture()
-    setupVertexBuffer()
-    setupIndexBuffer()
     setupUniformBuffer()
-
-    print("cube verts count: \(cube.vertexData().count)")
+    setupScene()
+    buildGlobalBuffers()
   }
 
   func setupDepthStencil(){
@@ -118,7 +57,16 @@ class Renderer: NSObject, MTKViewDelegate{
 
   func setupPipeline(){
     //compile shaders
-    let library = try! device.makeLibrary(source: shaderSource, options: nil)
+    // let library = try! device.makeLibrary(source: shaderSource, options: nil)
+    guard let url = Bundle.module.url(
+      forResource: "Shaders",
+      withExtension: "metal",
+      subdirectory: "Resources")
+    else{
+      fatalError("Could not find Shaders.metal in bundle")
+    }
+    let source = try! String(contentsOf: url, encoding: .utf8)
+    let library = try! device.makeLibrary(source: source, options: nil)
     let vertexFunction = library.makeFunction(name: "vertexShader")
     let fragmentFunction = library.makeFunction(name: "fragmentShader")
 
@@ -169,32 +117,106 @@ class Renderer: NSObject, MTKViewDelegate{
 
   func setupTexture(){
     let loader = TextureLoader(device: device)
-    guard let url = Bundle.module.url(forResource: "texture", withExtension: "jpg", subdirectory: "Resources") else {
-      fatalError("Could not find texture.jpg in bundle")
+    guard let url = Bundle.module.url(forResource: "car_blue", withExtension: "png", subdirectory: "Resources") else {
+      fatalError("Could not find car_blue.png in bundle")
     }
     texture = try! loader.loadTexture(from: url)
   }
 
-  func setupVertexBuffer(){
-    let loader = ObjLoader()
-    guard let url = Bundle.module.url(forResource: "cube", withExtension: "obj", subdirectory: "Resources") else {
-      fatalError("Could not find cube.obj in bundle")
-    }
-    // cube = Cube()
-    cube = try! loader.load(from: url)
-
-    //create vertex buffer (count * size)
-    let dataSize = cube.vertexData().count * MemoryLayout<Float>.stride
-    vertexBuffer = device.makeBuffer(bytes: cube.vertexData(), length: dataSize, options: [])
-  }
-
-  func setupIndexBuffer(){
-    let dataSize = cube.indexData().count * MemoryLayout<UInt32>.stride
-    indexBuffer = device.makeBuffer(bytes: cube.indexData(), length: dataSize, options: [])
-  }
-
   func setupUniformBuffer(){
-    uniformBuffer = device.makeBuffer(length: MemoryLayout<Uniforms>.stride, options: [])
+    uniformBuffer = device.makeBuffer(length: MemoryLayout<Uniforms>.stride * 100, options: [])
+  }
+
+  func setupScene(){
+    scene = Scene()
+
+    let loader = ObjLoader()
+    guard let url = Bundle.module.url(
+      forResource: "car",
+      withExtension: "obj",
+      subdirectory: "Resources") else {
+        fatalError("Could not find car.obj in bundle")
+    }
+    let car_mesh = try! loader.load(from: url)
+
+    let car_object = GameObject(
+      mesh: car_mesh,
+      transform: Transform(
+        position: SIMD3<Float>(0, 0, 0),
+        rotation: SIMD3<Float>(0, 45, 0),
+      )
+    )
+    scene.addObject(car_object)
+
+    guard let url = Bundle.module.url(
+      forResource: "lamp",
+      withExtension: "obj",
+      subdirectory: "Resources") else {
+        fatalError("Could not find light.obj in bundle")
+    }
+    let lamp_mesh = try! loader.load(from: url)
+
+    let lamp_object = GameObject(
+      mesh: lamp_mesh,
+      transform: Transform(
+        position: SIMD3<Float>(0, 0.5, 3.5),
+        rotation: SIMD3<Float>(0, 45, 0),
+        scale: SIMD3<Float>(0.003, 0.003, 0.003),
+      ),
+    )
+    scene.addObject(lamp_object)
+
+    guard let url = Bundle.module.url(
+      forResource: "cube",
+      withExtension: "obj",
+      subdirectory: "Resources") else {
+        fatalError("Could not find cube.obj in bundle")
+    }
+    let cube_mesh = try! loader.load(from: url)
+
+    let cube_object = GameObject(
+      mesh: cube_mesh,
+      transform: Transform(
+        position: SIMD3<Float>(0.5, 5.3, 2.5),
+        rotation: SIMD3<Float>(0, 0, 0),
+        scale: SIMD3<Float>(0.5, 0.5, 0.5),
+      )
+    )
+
+    scene.addObject(cube_object)
+  }
+
+  func buildGlobalBuffers(){
+    var global_vertex_data: [Float] = []
+    var global_index_data: [UInt32] = []
+    var current_vertex_offset: Int = 0
+    var current_index_offset: Int = 0
+    var current_vertex_count: UInt32 = 0
+
+    for i in 0..<scene.game_objects.count{
+      let mesh = scene.game_objects[i].mesh
+
+      scene.game_objects[i].mesh.vertex_offset = current_vertex_offset
+      scene.game_objects[i].mesh.index_offset = current_index_offset
+
+      global_vertex_data.append(contentsOf: mesh.vertexData())
+      global_index_data.append(contentsOf: mesh.indices)
+
+      current_vertex_offset += mesh.vertexData().count
+      current_index_offset += mesh.indices.count
+      current_vertex_count += UInt32(mesh.vertices.count)
+    }
+
+    globalVertexBuffer = device.makeBuffer(
+      bytes: global_vertex_data,
+      length: global_vertex_data.count * MemoryLayout<Float>.stride,
+      options: []
+    )
+    globalIndexBuffer = device.makeBuffer(
+      bytes: global_index_data,
+      length: global_index_data.count * MemoryLayout<UInt32>.stride,
+      options: []
+    )
   }
 
   //called every frame
@@ -204,19 +226,12 @@ class Renderer: NSObject, MTKViewDelegate{
     lastFrameTime = now 
     angle += Float(deltaTime) * 2.0
 
-    let mat = rotationMatrixY(angle: angle)
-
-    let proj = camera.makePerspective()
-    let eye = SIMD3<Float>(2, 2, 2)
+    let proj_mat = camera.makePerspective()
+    let eye = SIMD3<Float>(5, 10, 0)
     let center = SIMD3<Float>(0, 0, 0)
     let up = SIMD3<Float>(0, 1, 0)
     let view_mat = camera.lookAt(eye: eye, center: center, up: up)
     
-    let uniforms = Uniforms(modelMatrix: mat, viewMatrix: view_mat, projectionMatrix: proj)
-
-    let pointer = uniformBuffer.contents().bindMemory(to: Uniforms.self, capacity: 1)
-    pointer.pointee = uniforms
-
     guard let drawable = view.currentDrawable,
       let renderPassDescriptor = view.currentRenderPassDescriptor else {return}
 
@@ -232,20 +247,59 @@ class Renderer: NSObject, MTKViewDelegate{
     //set pipeline and vertex buffer
     renderEncoder.setDepthStencilState(depthStencilState)
     renderEncoder.setRenderPipelineState(pipelineState)
-    renderEncoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
-    renderEncoder.setVertexBuffer(uniformBuffer, offset: 0, index: 1)
     renderEncoder.setFragmentTexture(texture, index: 0)
     renderEncoder.setFragmentSamplerState(samplerState, index: 0)
 
+    let bulbOffset = SIMD3<Float>(0, 1.5, 5)
+    let bulbWorldPos = scene.game_objects[0].transform.position + bulbOffset
+
+    // scene.game_objects[0].transform.rotation.y = angle
     //draw the object
-    // renderEncoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 36)
-    renderEncoder.drawIndexedPrimitives(
-      type: .triangle,
-      indexCount: cube.indexData().count,
-      indexType: .uint32,
-      indexBuffer: indexBuffer,
-      indexBufferOffset: 0
-    )
+    for (index, game_object) in scene.game_objects.enumerated(){
+      let model_mat = game_object.transform.modelMatrix()
+
+      let normalMatrix = simd_float3x3(
+        model_mat.columns.0.xyz,
+        model_mat.columns.1.xyz,
+        model_mat.columns.2.xyz,
+      ).inverse.transpose
+
+      let uniforms = Uniforms(
+        modelMatrix: model_mat,
+        viewMatrix: view_mat,
+        projectionMatrix: proj_mat,
+        normalMatrix: normalMatrix,
+        lightDirection: normalize(SIMD3<Float>(1, -1, -1)),
+        lightColor: SIMD3<Float>(1, 1, 1),
+        spotLightPosition: SIMD3<Float>(0.7, 3.0, 2.5),
+        spotLightDirection: normalize(SIMD3<Float>(0, -1, 3)),
+        spotLightColor: SIMD3<Float>(1.0, 0.9, 0.7),
+        spotLightCutoff: cos(Float.pi / 4),
+        spotLightOuterCutoff: cos(Float.pi / 2)
+      )
+
+      let offset = index * MemoryLayout<Uniforms>.stride
+      let pointer = uniformBuffer
+        .contents()
+        .advanced(by: offset)
+        .bindMemory(to: Uniforms.self, capacity: 1)
+      pointer.pointee = uniforms
+      
+      renderEncoder.setVertexBuffer(
+        globalVertexBuffer,
+        offset: game_object.mesh.vertex_offset * MemoryLayout<Float>.stride,
+        index: 0
+      )
+      renderEncoder.setVertexBuffer(uniformBuffer, offset: offset, index: 1)
+      renderEncoder.setFragmentBuffer(uniformBuffer, offset: offset, index: 1)
+      renderEncoder.drawIndexedPrimitives(
+        type: .triangle,
+        indexCount: game_object.mesh.indices.count,
+        indexType: .uint32,
+        indexBuffer: globalIndexBuffer,
+        indexBufferOffset: game_object.mesh.index_offset * MemoryLayout<UInt32>.stride
+      )
+    }
 
     //finish encoding
     renderEncoder.endEncoding()

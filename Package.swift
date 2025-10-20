@@ -2,10 +2,10 @@
 import PackageDescription
 
 let package = Package(
-    name: "mtl_renderer",
+    name: "mtl-renderer",
     targets: [
         .executableTarget(
-            name: "mtl_renderer",
+            name: "mtl-renderer",
             path: "src",
             resources: [
                 .copy("Resources")

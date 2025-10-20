@@ -33,7 +33,7 @@ struct ObjLoader{
       case "vt":
         guard let u = Float(parts[1]) else {throw ObjLoaderError.invalidFloat}
         guard let v = Float(parts[2]) else {throw ObjLoaderError.invalidFloat}
-        let uv = SIMD2<Float>(u, v)
+        let uv = SIMD2<Float>(u, 1.0-v)
         uvs.append(uv)
       case "vn":
         guard let x = Float(parts[1]) else {throw ObjLoaderError.invalidFloat}
@@ -42,6 +42,8 @@ struct ObjLoader{
         let normal = SIMD3<Float>(x, y, z)
         normals.append(normal)
       case "f":
+        var face_verticies: [(posIdx: Int, uvIdx: Int, normIdx: Int)] = []
+
         for i in 1..<parts.count{
           let vert_ref = parts[i]
           let indices = vert_ref.components(separatedBy: "/")
@@ -49,7 +51,13 @@ struct ObjLoader{
           guard let posIdx = Int(indices[0]) else {throw ObjLoaderError.invalidIndex}
           guard let uvIdx = Int(indices[1]) else {throw ObjLoaderError.invalidIndex}
           guard let normIdx = Int(indices[2]) else {throw ObjLoaderError.invalidIndex}
-          face_indices.append((posIdx-1, uvIdx-1, normIdx-1))
+          face_verticies.append((posIdx-1, uvIdx-1, normIdx-1))
+        }
+
+        for i in 1..<face_verticies.count - 1{
+          face_indices.append(face_verticies[0])
+          face_indices.append(face_verticies[i])
+          face_indices.append(face_verticies[i+1])
         }
       default:
         break

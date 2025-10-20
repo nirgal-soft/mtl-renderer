@@ -3,6 +3,8 @@ import simd
 struct Object{
   var vertices: [Vertex]
   var indices: [UInt32]
+  var vertex_offset: Int = 0
+  var index_offset: Int = 0
 
   func indexData() -> [UInt32]{
     indices
