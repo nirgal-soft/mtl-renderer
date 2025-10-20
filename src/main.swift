@@ -16,6 +16,10 @@ extension simd_float4{
   }
 }
 
+func degreesToRadians(degrees: Float) -> Float{
+  return degrees * .pi / 180
+}
+
 // MARK: - Renderer
 class Renderer: NSObject, MTKViewDelegate{
   let device: MTLDevice
@@ -24,15 +28,17 @@ class Renderer: NSObject, MTKViewDelegate{
   var camera: Camera!
   var pipelineState: MTLRenderPipelineState!
   var samplerState: MTLSamplerState!
-  // var vertexBuffer: MTLBuffer!
-  // var indexBuffer: MTLBuffer!
   var uniformBuffer: MTLBuffer!
   var globalVertexBuffer: MTLBuffer!
   var globalIndexBuffer: MTLBuffer!
-  var texture: MTLTexture!
+  var car_texture: MTLTexture!
+  var lamp_texture: MTLTexture!
   var scene: Scene!
   var lastFrameTime = CACurrentMediaTime()
   var angle: Float = 0.0
+  var particleSystem: ParticleSystem!
+  var particleBuffer: MTLBuffer!
+  var whiteTexture: MTLTexture!
 
   init(device: MTLDevice){
     self.device = device
@@ -42,9 +48,10 @@ class Renderer: NSObject, MTKViewDelegate{
     setupDepthStencil()
     setupPipeline()
     setupSamplerState()
-    setupTexture()
+    setupTextures()
     setupUniformBuffer()
     setupScene()
+    setupParticleSystem()
     buildGlobalBuffers()
   }
 
@@ -115,12 +122,17 @@ class Renderer: NSObject, MTKViewDelegate{
     samplerState = device.makeSamplerState(descriptor: samplerDescriptor)
   }
 
-  func setupTexture(){
+  func setupTextures(){
     let loader = TextureLoader(device: device)
     guard let url = Bundle.module.url(forResource: "car_blue", withExtension: "png", subdirectory: "Resources") else {
       fatalError("Could not find car_blue.png in bundle")
     }
-    texture = try! loader.loadTexture(from: url)
+    car_texture = try! loader.loadTexture(from: url)
+
+    guard let url = Bundle.module.url(forResource: "metal", withExtension: "png", subdirectory: "Resources") else {
+      fatalError("Could not find metal.png in bundle")
+    }
+    lamp_texture = try! loader.loadTexture(from: url)
   }
 
   func setupUniformBuffer(){
@@ -183,7 +195,33 @@ class Renderer: NSObject, MTKViewDelegate{
       )
     )
 
-    scene.addObject(cube_object)
+    // scene.addObject(cube_object)
+  }
+
+  func setupParticleSystem(){
+    particleSystem = ParticleSystem(
+      maxParticles: 1000,
+      spawnArea: SIMD3<Float>(5, 5, 5)
+    )
+
+    let maxParticleVertices = particleSystem.maxParticles * 6 * 8
+    particleBuffer = device.makeBuffer(length: maxParticleVertices * MemoryLayout<Float>.stride, options: [])
+
+    let descriptor = MTLTextureDescriptor()
+    descriptor.pixelFormat = .rgba8Unorm
+    descriptor.width = 1
+    descriptor.height = 1
+    descriptor.usage = .shaderRead
+
+    whiteTexture = device.makeTexture(descriptor: descriptor)!
+
+    var pixel: [UInt8] = [255, 255, 255, 255]
+    whiteTexture.replace(
+      region: MTLRegionMake2D(0, 0, 1, 1),
+      mipmapLevel: 0,
+      withBytes: &pixel,
+      bytesPerRow: 4
+    )
   }
 
   func buildGlobalBuffers(){
@@ -222,15 +260,24 @@ class Renderer: NSObject, MTKViewDelegate{
   //called every frame
   func draw(in view: MTKView){
     let now = CACurrentMediaTime()
-    let deltaTime = now - lastFrameTime
+    let deltaTime = Float(now - lastFrameTime)
     lastFrameTime = now 
     angle += Float(deltaTime) * 2.0
+
+    particleSystem.update(deltaTime: deltaTime)
+
 
     let proj_mat = camera.makePerspective()
     let eye = SIMD3<Float>(10, 5, 0)
     let center = SIMD3<Float>(0, 0, 0)
     let up = SIMD3<Float>(0, 1, 0)
     let view_mat = camera.lookAt(eye: eye, center: center, up: up)
+
+    let cameraRight = SIMD3<Float>(view_mat.columns.0.x, view_mat.columns.1.x, view_mat.columns.2.x)
+    let cameraUp = SIMD3<Float>(view_mat.columns.0.y, view_mat.columns.1.y, view_mat.columns.2.y)
+
+    let particleData = particleSystem.vertexData(cameraRight: cameraRight, cameraUp: cameraUp)
+    memcpy(particleBuffer.contents(), particleData, particleData.count * MemoryLayout<Float>.stride)
     
     guard let drawable = view.currentDrawable,
       let renderPassDescriptor = view.currentRenderPassDescriptor else {return}
@@ -247,7 +294,7 @@ class Renderer: NSObject, MTKViewDelegate{
     //set pipeline and vertex buffer
     renderEncoder.setDepthStencilState(depthStencilState)
     renderEncoder.setRenderPipelineState(pipelineState)
-    renderEncoder.setFragmentTexture(texture, index: 0)
+    // renderEncoder.setFragmentTexture(car_texture, index: 0)
     renderEncoder.setFragmentSamplerState(samplerState, index: 0)
 
     let bulbOffset = SIMD3<Float>(0, 1.5, 5)
@@ -257,6 +304,11 @@ class Renderer: NSObject, MTKViewDelegate{
     //draw the object
     for (index, game_object) in scene.game_objects.enumerated(){
       let model_mat = game_object.transform.modelMatrix()
+      if index == 0{
+        renderEncoder.setFragmentTexture(car_texture, index: 0)
+      }else{
+        renderEncoder.setFragmentTexture(lamp_texture, index: 0)
+      }
 
       let normalMatrix = simd_float3x3(
         model_mat.columns.0.xyz,
@@ -300,6 +352,31 @@ class Renderer: NSObject, MTKViewDelegate{
         indexBufferOffset: game_object.mesh.index_offset * MemoryLayout<UInt32>.stride
       )
     }
+
+    let particleUniforms = Uniforms(
+      modelMatrix: matrix_identity_float4x4,
+      viewMatrix: view_mat,
+      projectionMatrix: proj_mat,
+      normalMatrix: matrix_identity_float3x3,
+      lightDirection: normalize(SIMD3<Float>(1, -1, -1)),
+      lightColor: SIMD3<Float>(1, 1, 1),
+      spotLightPosition: SIMD3<Float>(0.7, 3.0, 2.5),
+      spotLightDirection: normalize(SIMD3<Float>(0, -1, 3)),
+      spotLightColor: SIMD3<Float>(1.0, 0.9, 0.7),
+      spotLightCutoff: cos(Float.pi / 4),
+      spotLightOuterCutoff: cos(Float.pi / 2)
+    )
+
+    let particleOffset = scene.game_objects.count * MemoryLayout<Uniforms>.stride
+
+    let particlePointer = uniformBuffer.contents().advanced(by: particleOffset).bindMemory(to: Uniforms.self, capacity: 1)
+    particlePointer.pointee = particleUniforms
+
+    renderEncoder.setFragmentTexture(whiteTexture, index: 0)
+    renderEncoder.setVertexBuffer(particleBuffer, offset: 0, index: 0)
+    renderEncoder.setVertexBuffer(uniformBuffer, offset: particleOffset, index: 1)
+    renderEncoder.setFragmentBuffer(uniformBuffer, offset: particleOffset, index: 1)
+    renderEncoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: particleSystem.particles.count * 6)
 
     //finish encoding
     renderEncoder.endEncoding()
