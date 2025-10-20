@@ -227,7 +227,7 @@ class Renderer: NSObject, MTKViewDelegate{
     angle += Float(deltaTime) * 2.0
 
     let proj_mat = camera.makePerspective()
-    let eye = SIMD3<Float>(5, 10, 0)
+    let eye = SIMD3<Float>(10, 5, 0)
     let center = SIMD3<Float>(0, 0, 0)
     let up = SIMD3<Float>(0, 1, 0)
     let view_mat = camera.lookAt(eye: eye, center: center, up: up)
